@@ -13,4 +13,4 @@ Any variables without defaults *must* be specified, the easiest way is to create
 - `private_key_path`: path to the private key file to authenticate to your servers with
 - `node_count`: how many nodes to create (should probably be an odd number, default: `3`)
 - `node_plan`: the node plan to use (default: `baremetal_0`)
-- `node_facility`: the facility to create the nodes in (defualt: `ewr1`)
+- `node_facility`: the facility to create the nodes in (default: `ewr1`)
