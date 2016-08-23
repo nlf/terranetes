@@ -56,6 +56,7 @@ coreos:
         ExecStart=/usr/lib/coreos/kubelet-wrapper \
           --address=$private_ipv4 \
           --node-ip=$private_ipv4 \
+          --hostname-override=$private_ipv4 \
           --api-servers=http://127.0.0.1:8080 \
           --register-schedulable=true \
           --allow-privileged=true \
@@ -219,6 +220,7 @@ write_files:
           - proxy
           - --master=http://127.0.0.1:8080
           - --proxy-mode=iptables
+          - --hostname-override=$private_ipv4
           securityContext:
             privileged: true
           volumeMounts:
