@@ -1,0 +1,255 @@
+#cloud-config
+---
+coreos:
+  update:
+    reboot-strategy: etcd-lock
+  locksmith:
+    window-start: Sun 05:00
+    window-length: 1h
+  flannel:
+    interface: $private_ipv4
+    etcd_endpoints: http://127.0.0.1:2379
+  etcd2:
+    name: ${name}
+    initial-advertise-peer-urls: http://$private_ipv4:2380
+    advertise-client-urls: http://$private_ipv4:2379
+    listen-client-urls: http://127.0.0.1:2379,http://$private_ipv4:2379
+    listen-peer-urls: http://$private_ipv4:2380
+    discovery: ${discovery_token}
+  units:
+    - name: etcd2.service
+      command: start
+      drop-ins:
+        - name: "40-phone-home.conf"
+          content: |
+            [Unit]
+            Requires=oem-phone-home.service
+            After=oem-phone-home.service
+    - name: flanneld.service
+      command: start
+      drop-ins:
+        - name: "40-etcd2.conf"
+          content: |
+            [Unit]
+            Requires=etcd2.service
+            After=etcd2.service
+            [Service]
+            Restart=always
+            RestartSec=10
+            ExecStartPre=/usr/bin/etcdctl --no-sync set /coreos.com/network/config '{"Network":"172.16.0.0/16","Backend":{"Type":"vxlan"}}'
+    - name: docker.service
+      drop-ins:
+        - name: "40-flanneld.conf"
+          content: |
+            [Unit]
+            Requires=flanneld.service
+            After=flanneld.service
+    - name: kubelet.service
+      command: start
+      content: |
+        [Unit]
+        Description="Launch all of the kubernetes master services"
+        [Service]
+        Environment=KUBELET_VERSION=v1.3.4_coreos.0
+        Restart=always
+        RestartSec=10
+        ExecStart=/usr/lib/coreos/kubelet-wrapper \
+          --address=$private_ipv4 \
+          --node-ip=$private_ipv4 \
+          --api-servers=http://127.0.0.1:8080 \
+          --register-schedulable=true \
+          --allow-privileged=true \
+          --config=/etc/kubernetes/manifests \
+          --cluster-dns=172.17.0.10 \
+          --cluster-domain=cluster.local
+        [Install]
+        WantedBy=multi-user.target
+    - name: sshd.socket
+      command: restart
+      content: |
+        [Socket]
+        ListenStream=2042
+        Accept=yes
+    - name: settimezone.service
+      command: start
+      content: |
+        [Unit]
+        Description=Set the timezone
+        [Service]
+        ExecStart=/usr/bin/timedatectl set-timezone UTC
+        RemainAfterExit=yes
+        Type=oneshot
+write_files:
+  - path: /tmp/openssl.cnf
+    content: |
+      [req]
+      req_extensions = v3_req
+      distinguished_name = req_distinguished_name
+      [req_distinguished_name]
+      [ v3_req ]
+      basicConstraints = CA:FALSE
+      keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+      subjectAltName = @alt_names
+      [alt_names]
+      DNS.1 = kubernetes
+      DNS.2 = kubernetes.default
+      DNS.3 = kubernetes.default.svc
+      DNS.4 = kubernetes.default.svc.cluster.local
+      DNS.5 = ${master_name}.${domain}
+      IP.1 = $public_ipv4
+      IP.2 = $private_ipv4
+      IP.3 = 127.0.0.1
+      IP.4 = 172.17.0.1
+  - path: /etc/ntp.conf
+    content: |
+      server 0.pool.ntp.org
+      server 1.pool.ntp.org
+      restrict default nomodify nopeer noquery limited kod
+      restrict 127.0.0.1
+      restrict [::1]
+  - path: /etc/ssh/sshd_config
+    content: |
+      UsePrivilegeSeparation sandbox
+      Subsystem sftp internal-sftp
+      PermitRootLogin no
+      AllowUsers core
+      PasswordAuthentication no
+      ChallengeResponseAuthentication no
+  - path: /etc/kubernetes/manifests/kube-apiserver.yaml
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-apiserver
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-apiserver
+          image: quay.io/coreos/hyperkube:v1.3.4_coreos.0
+          command:
+          - /hyperkube
+          - apiserver
+          - --apiserver-count=${node_count}
+          - --etcd-servers=http://127.0.0.1:2379
+          - --allow-privileged=true
+          - --service-cluster-ip-range=172.17.0.0/16
+          - --secure-port=443
+          - --advertise-address=$private_ipv4
+          - --admission-control=NamespaceAutoProvision,NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota
+          - --tls-cert-file=/etc/kubernetes/ssl/node.pem
+          - --tls-private-key-file=/etc/kubernetes/ssl/node.key
+          - --client-ca-file=/etc/kubernetes/ssl/ca.pem
+          - --service-account-key-file=/etc/kubernetes/ssl/node.key
+          ports:
+          - containerPort: 443
+            hostPort: 443
+            name: https
+          - containerPort: 8080
+            hostPort: 8080
+            name: local
+          volumeMounts:
+          - mountPath: /etc/kubernetes/ssl
+            name: ssl-certs-kubernetes
+            readOnly: true
+          - mountPath: /etc/ssl/certs
+            name: ssl-certs-host
+            readOnly: true
+        volumes:
+        - hostPath:
+            path: /etc/kubernetes/ssl
+          name: ssl-certs-kubernetes
+        - hostPath:
+            path: /usr/share/ca-certificates
+          name: ssl-certs-host
+  - path: /etc/kubernetes/manifests/kube-controller-manager.yaml
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-controller-manager
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-controller-manager
+          image: quay.io/coreos/hyperkube:v1.3.4_coreos.0
+          command:
+          - /hyperkube
+          - controller-manager
+          - --master=http://127.0.0.1:8080
+          - --leader-elect=true 
+          - --service-account-private-key-file=/etc/kubernetes/ssl/node.key
+          - --root-ca-file=/etc/kubernetes/ssl/ca.pem
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: 10252
+            initialDelaySeconds: 15
+            timeoutSeconds: 1
+          volumeMounts:
+          - mountPath: /etc/kubernetes/ssl
+            name: ssl-certs-kubernetes
+            readOnly: true
+          - mountPath: /etc/ssl/certs
+            name: ssl-certs-host
+            readOnly: true
+        volumes:
+        - hostPath:
+            path: /etc/kubernetes/ssl
+          name: ssl-certs-kubernetes
+        - hostPath:
+            path: /usr/share/ca-certificates
+          name: ssl-certs-host
+  - path: /etc/kubernetes/manifests/kube-proxy.yaml
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-proxy
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-proxy
+          image: quay.io/coreos/hyperkube:v1.3.4_coreos.0
+          command:
+          - /hyperkube
+          - proxy
+          - --master=http://127.0.0.1:8080
+          - --proxy-mode=iptables
+          securityContext:
+            privileged: true
+          volumeMounts:
+          - mountPath: /etc/ssl/certs
+            name: ssl-certs-host
+            readOnly: true
+        volumes:
+        - hostPath:
+            path: /usr/share/ca-certificates
+          name: ssl-certs-host
+  - path: /etc/kubernetes/manifests/kube-scheduler.yaml
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-scheduler
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-scheduler
+          image: quay.io/coreos/hyperkube:v1.3.4_coreos.0
+          command:
+          - /hyperkube
+          - scheduler
+          - --master=http://127.0.0.1:8080
+          - --leader-elect=true
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: 10251
+            initialDelaySeconds: 15
+            timeoutSeconds: 1
