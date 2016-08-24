@@ -53,7 +53,7 @@ resource "packet_device" "node" {
   }
 
   provisioner "file" {
-    content = "${element(tls_private_key.node.*.private_key_pem, count.index)}"
+    content = "${tls_private_key.node.private_key_pem}"
     destination = "/tmp/node.key"
 
     connection {

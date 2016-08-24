@@ -18,8 +18,6 @@ resource "tls_self_signed_cert" "ca" {
 }
 
 resource "tls_private_key" "node" {
-  count = "${var.node_count}"
-
   algorithm = "RSA"
 }
 
