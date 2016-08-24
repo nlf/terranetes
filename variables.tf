@@ -23,3 +23,6 @@ provider "packet" {
 }
 
 variable "private_key_path" {}
+variable "node_os" {
+  default = "coreos_stable"
+}

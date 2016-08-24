@@ -23,7 +23,7 @@ resource "packet_device" "node" {
   hostname = "${format("kube-%02d", count.index + 1)}"
   plan = "${var.node_plan}"
   facility = "${var.node_facility}"
-  operating_system = "coreos_beta"
+  operating_system = "${var.node_os}"
   project_id = "${var.packet_project_id}"
   billing_cycle = "hourly"
   user_data = "${element(template_file.cloud_config.*.rendered, count.index)}"
