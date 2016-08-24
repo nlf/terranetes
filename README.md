@@ -14,3 +14,4 @@ Any variables without defaults *must* be specified, the easiest way is to create
 - `node_count`: how many nodes to create (should probably be an odd number, default: `3`)
 - `node_plan`: the node plan to use (default: `baremetal_0`)
 - `node_facility`: the facility to create the nodes in (default: `ewr1`)
+- `node_os`: the os to use for the nodes, must be one of `coreos_stable`, `coreos_beta`, or `coreos_alpha` (default: `coreos_beta`)
